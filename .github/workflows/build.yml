@@ -1,6 +1,9 @@
 # Build one of the core's bitstreams with Quartus 17.0 Lite (raetro/quartus:17.0),
 # as build.sh does locally: the run fails unless the compile succeeds and
 # every timing requirement is met. The .rbf is the run's artifact.
+# A full bitstream can miss timing by a hair on one seed and meet it on
+# another (NS2-14), so the run compiles a list of fitter seeds side by side;
+# each seed that meets timing uploads its own .rbf.
 name: build
 
 on:
@@ -9,12 +12,19 @@ on:
       project:
         description: "Quartus project (NamcoS2, NamcoS2_LW, NamcoS2_MH, NamcoS2_SG, NamcoS2_SZ)"
         default: NamcoS2_LW
+      seeds:
+        description: "Fitter seeds, a JSON list"
+        default: "[743, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144]"
   push:
     branches: [lw-right-stick-aim]
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        seed: ${{ fromJSON(inputs.seeds || '[743, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144]') }}
     timeout-minutes: 340
     env:
       PROJ: ${{ inputs.project || 'NamcoS2_LW' }}
@@ -25,6 +35,11 @@ jobs:
           df -h /
 
       - uses: actions/checkout@v4
+
+      - name: Set the fitter seed
+        run: |
+          sed -i -E "s/^(set_global_assignment -name SEED ).*/\1${{ matrix.seed }}/" "$PROJ.qsf"
+          grep -n "name SEED" "$PROJ.qsf"
 
       - name: Pull Quartus 17.0
         run: docker pull raetro/quartus:17.0
@@ -54,7 +69,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ${{ env.PROJ }}
+          name: ${{ env.PROJ }}-seed${{ matrix.seed }}
           path: |
             ${{ env.PROJ }}.rbf
             build.log
