@@ -17,7 +17,7 @@ static void expect(const char *what, unsigned got, unsigned want) {
 }
 static uint16_t stick(int x, int y) { return (uint16_t)(((y & 0xff) << 8) | (x & 0xff)); }
 static void reset(unsigned mode, unsigned ib = 0xff, unsigned ih = 0xff) {
-	t->mode = mode; t->idle_b = ib; t->idle_h = ih; t->flip = 0; t->an_default = 0x8080808080ffffffULL;
+	t->mode = mode; t->idle_b = ib; t->idle_h = ih; t->flip = 0; t->aim_r = 0; t->an_default = 0x8080808080ffffffULL;
 	t->p1 = t->p2 = 0; t->rp1 = t->rp2 = 0; t->start1 = t->start2 = t->coin1 = t->coin2 = t->svc1 = t->svc2 = 0;
 	t->stick1 = t->stick2 = t->rstick1 = t->rstick2 = 0; t->mouse = 0; t->dial_default = 0xffffff0f;
 	t->reset = 1; clk(); clk(); t->reset = 0; clk();
@@ -115,6 +115,24 @@ int main(int argc, char **argv) {
 	t->p2 = 0; t->stick2 = stick(3, -2); clk(); clk(); expect("lw P2 resting stick keeps the d-pad's aim", an(3), 0xff);
 	t->stick2 = stick(-128, 0); clk(); clk(); expect("lw P2 stick pushed takes over", an(3), 0x00);
 	t->stick2 = 0; t->p1 = 0x01; frames(4); expect("lw P1 d-pad steers", an(5) > 0x80, 1); expect("lw P1 d-pad does not aim", an(4), 0x80);
+	// Lucky & Wild, OSD "P1 aim: Right stick": the right stick aims (AN4 X1,
+	// AN2 Y1), the left stick only steers, the pedals are B2 / B3 alone
+	reset(0x2a); t->aim_r = 1; clk();
+	t->stick1 = stick(127, -128); clk(); frames(1);
+	expect("lw-r left stick steers", an(5), 0xff); expect("lw-r left stick does not aim X", an(4), 0x80); expect("lw-r left stick does not aim Y", an(2), 0x80);
+	t->stick1 = 0; t->rstick1 = stick(-128, 127); clk(); clk(); frames(20);   // the wheel returns 8 a frame
+	expect("lw-r right stick aims X", an(4), 0x00); expect("lw-r right stick aims Y", an(2), 0xff);
+	expect("lw-r right stick down is no brake", an(6), 0x00); expect("lw-r wheel centred", an(5), 0x80);
+	t->rstick1 = stick(0, -128); clk(); clk(); frames(1); expect("lw-r right stick up is no accel", an(7), 0x00); expect("lw-r right stick up aims", an(2), 0x00);
+	t->rstick1 = 0; t->p1 = 0x20; frames(10); expect("lw-r accel B2", an(7), 0x80);
+	t->p1 = 0x40; frames(10); expect("lw-r brake B3", an(6), 0x40);
+	t->p1 = 0; frames(10); for (int i = 0; i < 3; i++) mouse(-40, 0, 0); expect("lw-r mouse still takes over", an(4), 0x08);
+	t->rstick1 = stick(100, 0); clk(); clk(); expect("lw-r right stick takes back", an(4), 0x80 + 100);
+	t->p1 = 0x10; clk(); clk(); expect("lw-r fire", t->mcuh & 0x20, 0x00);
+	// the option does nothing outside Lucky & Wild: Final Lap's right stick still the pedals
+	reset(0x05); t->aim_r = 1; clk(); t->rstick1 = stick(0, -128); frames(1); expect("fl aim_r ignored: accel right stick", an(7), 0x80);
+	// Steel Gunner: player 1 still aims with the left stick
+	reset(0x12); t->aim_r = 1; clk(); t->stick1 = stick(127, 0); clk(); clk(); expect("sg aim_r ignored: left stick aims", an(4), 0xff);
 	// Golly! Ghost!: player 1's d-pad aims (AN0 X1, AN1 Y1)
 	reset(0x82);
 	t->p1 = 0x02; frames(4); expect("gg P1 d-pad left: AN0", an(0), 0x60);

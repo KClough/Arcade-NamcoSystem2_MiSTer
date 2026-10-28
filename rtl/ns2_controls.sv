@@ -5,7 +5,9 @@
 //         guns, 3 Metal Hawk's analog stick
 //   [2]   digital: Assault's twin sticks (below); wheel: the gear shift is
 //         a toggle on MCUH bit 5 (B3: Final Lap, Four Trax)
-//   [3]   Lucky & Wild: the wheel and pedals and the guns
+//   [3]   Lucky & Wild: the wheel and pedals and the guns; with `aim_r`
+//         (OSD "P1 aim") player 1 aims with the right stick, the left
+//         stick only steers and the pedals are B2 / B3 alone
 //   the guns:
 //   [5:4] their channels: 0 AN0 X1, AN1 Y1, AN2 X2, AN3 Y2 (Golly!
 //         Ghost!, Bubble Trouble); 1 AN4 X1, AN5 X2, AN6 Y1, AN7 Y2 (Steel
@@ -33,6 +35,7 @@ module ns2_controls (
 	input             vblank,        // a step a frame, on its rise
 	input      [7:0]  mode,
 	input             flip,          // the picture is shown turned 180 degrees
+	input             aim_r,         // Lucky & Wild: player 1 aims with the right stick
 	input      [63:0] an_default,    // MAME's power-on AN0-AN7 (config bytes 21-28)
 	input      [7:0]  idle_b, idle_h, // MCUB's and MCUH's idle values (config bytes 34-35)
 	// players: [0] R [1] L [2] D [3] U [4] B1 [5] B2 [6] B3 [7] B4 [8] B5
@@ -63,7 +66,12 @@ module ns2_controls (
 		step_to = v < t ? (t - v > d ? v + d : t) : (v - t > d ? v - d : t);
 	endfunction
 	wire signed [7:0] sx1 = stick1[7:0], sy1 = stick1[15:8], sx2 = stick2[7:0], sy2 = stick2[15:8];
-	wire signed [7:0] ry1 = rstick1[15:8];
+	// Lucky & Wild with `aim_r`: player 1's gun stick is the right one, and
+	// the right stick no longer works the pedals
+	wire       ar1 = aim_r && mode[3];
+	wire [15:0] gstick1 = ar1 ? rstick1 : stick1;
+	wire signed [7:0] gx1 = gstick1[7:0], gy1 = gstick1[15:8];
+	wire signed [7:0] ry1 = ar1 ? 8'sd0 : rstick1[15:8];
 	function big(input signed [7:0] v); big = v > 8'sd12 || v < -8'sd12; endfunction
 
 	// ------------------------------------------------------------ per frame
@@ -118,7 +126,7 @@ module ns2_controls (
 	endfunction
 	always @(posedge clk) begin
 		m_t <= mouse[24];
-		s1_d <= stick1;
+		s1_d <= gstick1;
 		s2_d <= stick2;
 		if (tick) begin
 			if (pad1_ok) begin k1x <= pad_step(k1x, p1[1], p1[0]); k1y <= pad_step(k1y, p1[3], p1[2]); end
@@ -129,7 +137,7 @@ module ns2_controls (
 			m_y <= clamp($signed({3'b000, m_y}) - mdy, 8'h00, 8'hff);
 		end
 		// the last to move aims (later lines win within a clock)
-		if (stick1 != s1_d && (src1 != SRC_PAD || big(sx1) || big(sy1))) src1 <= SRC_STICK;
+		if (gstick1 != s1_d && (src1 != SRC_PAD || big(gx1) || big(gy1))) src1 <= SRC_STICK;
 		if (mouse[24] != m_t && (mdx != 0 || mdy != 0)) src1 <= SRC_MOUSE;
 		if (pad1) src1 <= SRC_PAD;
 		if (stick2 != s2_d && (big(sx2) || big(sy2))) src2 <= SRC_STICK;
@@ -141,8 +149,8 @@ module ns2_controls (
 	end
 	wire       use_mouse = src1 == SRC_MOUSE;
 	// positions on the displayed picture, 0-255
-	wire [7:0] d1x = use_mouse ? m_x : src1 == SRC_PAD ? k1x : {~stick1[7], stick1[6:0]};
-	wire [7:0] d1y = use_mouse ? m_y : src1 == SRC_PAD ? k1y : {~stick1[15], stick1[14:8]};
+	wire [7:0] d1x = use_mouse ? m_x : src1 == SRC_PAD ? k1x : {~gstick1[7], gstick1[6:0]};
+	wire [7:0] d1y = use_mouse ? m_y : src1 == SRC_PAD ? k1y : {~gstick1[15], gstick1[14:8]};
 	wire [7:0] d2x = src2 == SRC_PAD ? k2x : {~stick2[7], stick2[6:0]};
 	wire [7:0] d2y = src2 == SRC_PAD ? k2y : {~stick2[15], stick2[14:8]};
 	// on the board's picture
