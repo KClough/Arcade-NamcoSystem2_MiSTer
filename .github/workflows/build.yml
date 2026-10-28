@@ -1,0 +1,63 @@
+# Build one of the core's bitstreams with Quartus 17.0 Lite (raetro/quartus:17.0),
+# as build.sh does locally: the run fails unless the compile succeeds and
+# every timing requirement is met. The .rbf is the run's artifact.
+name: build
+
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        description: "Quartus project (NamcoS2, NamcoS2_LW, NamcoS2_MH, NamcoS2_SG, NamcoS2_SZ)"
+        default: NamcoS2_LW
+  push:
+    branches: [lw-right-stick-aim]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    env:
+      PROJ: ${{ inputs.project || 'NamcoS2_LW' }}
+    steps:
+      - name: Free disk space (the image is 6 GB)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - uses: actions/checkout@v4
+
+      - name: Pull Quartus 17.0
+        run: docker pull raetro/quartus:17.0
+
+      - name: Compile
+        run: |
+          docker run --rm -v "$PWD:/build" -w /build -e PROJ raetro/quartus:17.0 bash -c '
+            set -e
+            Q=$(command -v quartus_sh || ls /opt/intelFPGA*/17.0/quartus/bin/quartus_sh /opt/intelFPGA*/quartus/bin/quartus_sh 2>/dev/null | head -n 1)
+            test -x "$Q" || { echo "quartus_sh not found"; exit 1; }
+            echo "using $Q"
+            # fx68k microcode, where its $readmemb looks (as build.sh)
+            cp rtl/third_party/fx68k/microrom.mem rtl/third_party/fx68k/nanorom.mem .
+            "$Q" --flow compile "$PROJ" > build.log 2>&1 || true
+          '
+          case "$PROJ" in NamcoS2) OUT=output_files ;; *) OUT=output_files_${PROJ#NamcoS2_} ;; esac
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
+          grep -E "^Error|Error \(" build.log | head -n 25 || true
+          grep -q "Full Compilation was successful" build.log && test -f "$OUT/$PROJ.rbf" || { echo "BUILD FAILED"; exit 1; }
+          grep -E "Logic utilization \(in ALMs\)|Total RAM Blocks|Total registers" "$OUT/$PROJ.fit.rpt" | head -n 3
+          n=$(grep -c "Timing requirements not met" "$OUT/$PROJ.sta.rpt" || true)
+          echo "timing-not-met lines: $n"
+          test "$n" = 0 || { echo "TIMING NOT MET"; exit 1; }
+          cp "$OUT/$PROJ.rbf" "$PROJ.rbf"
+          md5sum "$PROJ.rbf"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ env.PROJ }}
+          path: |
+            ${{ env.PROJ }}.rbf
+            build.log
+            ${{ env.OUT }}/*.fit.summary
+            ${{ env.OUT }}/*.sta.summary
+          if-no-files-found: warn
